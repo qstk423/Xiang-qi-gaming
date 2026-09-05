@@ -1,46 +1,33 @@
-"""Xiangqi Council 基础服务。"""
+"""Xiangqi Council 入口。"""
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+from src.api.online import router as rooms_router
+from src.api.routes import router
 
 
 app = FastAPI(
     title="Xiangqi Council",
     description="中国象棋对弈、学习、联机与多智能体棋评",
-    version="0.1.0",
+    version="0.2.0",
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/api/health")
-def health() -> dict:
-    return {
-        "status": "ok",
-        "product": "Xiangqi Council",
-        "version": app.version,
-        "engine": "not_configured",
-        "council": "scaffold",
-    }
-
-
-@app.get("/api/capabilities")
-def capabilities() -> dict:
-    return {
-        "ready": ["local_board", "move_history", "board_flip", "responsive_pc_shell"],
-        "planned": [
-            "rules_engine",
-            "pikafish",
-            "council",
-            "analysis_board",
-            "puzzles",
-            "online_rooms",
-            "accounts",
-        ],
-    }
-
+app.include_router(router, prefix="/api")
+app.include_router(rooms_router, prefix="/api")
 
 frontend = Path(__file__).resolve().parent.parent / "frontend"
 app.mount("/", StaticFiles(directory=frontend, html=True), name="frontend")

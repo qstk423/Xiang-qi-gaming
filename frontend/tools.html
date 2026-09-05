@@ -2,23 +2,33 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>工具 · Xiangqi Council</title><link rel="stylesheet" href="style.css?v=1">
+  <title>工具 · Xiangqi Council</title><link rel="stylesheet" href="style.css?v=3">
 </head>
-<body>
+<body data-page="tools">
 <div class="app-shell">
   <header class="topbar">
     <a class="brand" href="index.html"><span class="brand-mark">象</span><span><strong>Xiangqi Council</strong><small>中国象棋多智能体棋评</small></span></a>
     <nav class="topnav"><a href="index.html">对弈</a><a href="learn.html">学习</a><a href="online.html">联机</a><a class="active" href="tools.html">工具</a></nav>
-    <span class="status-pill">路线图</span>
+    <span class="status-pill" id="service-status">工具</span>
   </header>
   <main class="page-main">
-    <section class="panel hero"><p class="eyebrow">TOOLS</p><h1>分析工具</h1><p>功能入口与 ChessCouncil 保持一致，底层替换为象棋 FEN、UCI/UCCI 和 Pikafish。</p></section>
-    <div class="feature-grid">
-      <article class="panel feature-card"><h2>分析棋盘</h2><p>摆子、加载 FEN、变着树、注释与 Pikafish 评估。</p><span class="tag">阶段 2</span></article>
-      <article class="panel feature-card"><h2>棋谱导入</h2><p>导入 PGN/XQF 等常见格式，逐着回放与复盘。</p><span class="tag">阶段 3</span></article>
-      <article class="panel feature-card"><h2>调用证明</h2><p>记录模型、Agent、延迟和 Token，用于排障与大赛证据。</p><span class="tag">阶段 2</span></article>
-    </div>
+    <section class="panel hero">
+      <p class="eyebrow">TOOLS</p>
+      <h1>局面工具</h1>
+      <p>导入 / 导出 FEN，把局面带回对弈页继续下。</p>
+    </section>
+    <section class="panel">
+      <label class="fen-label">FEN
+        <textarea id="fen-box" rows="4" placeholder="粘贴象棋 FEN…"></textarea>
+      </label>
+      <div class="board-actions" style="margin-top:12px">
+        <button id="btn-export-fen" type="button">导出当前</button>
+        <button id="btn-load-fen" class="accent" type="button">加载 FEN</button>
+        <button id="btn-goto-board" type="button">回对弈页</button>
+      </div>
+    </section>
   </main>
 </div>
+<script src="app.js?v=3"></script>
 </body>
 </html>
