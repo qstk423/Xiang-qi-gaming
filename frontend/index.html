@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#163227">
+  <title>对弈 · Xiangqi Council</title>
+  <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body data-page="play">
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="index.html" aria-label="Xiangqi Council 首页">
+        <span class="brand-mark" aria-hidden="true">象</span>
+        <span><strong>Xiangqi Council</strong><small>中国象棋多智能体棋评</small></span>
+      </a>
+      <nav class="topnav" aria-label="主导航">
+        <a class="active" href="index.html">对弈</a>
+        <a href="learn.html">学习</a>
+        <a href="online.html">联机</a>
+        <a href="tools.html">工具</a>
+      </nav>
+      <span class="status-pill" id="service-status">本地棋盘</span>
+    </header>
+
+    <main class="play-layout">
+      <section class="board-panel panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">PLAY</p>
+            <h1>棋局</h1>
+          </div>
+          <div class="setup">
+            <label>模式
+              <select id="game-mode">
+                <option>人人练习</option>
+                <option disabled>人机 · 下一阶段</option>
+                <option disabled>AI 对抗 · 下一阶段</option>
+              </select>
+            </label>
+            <button class="accent" id="new-game">新对局</button>
+          </div>
+        </div>
+
+        <div class="player-row top">
+          <span class="avatar black">将</span>
+          <div><strong>黑方</strong><small id="black-state">等待红方</small></div>
+        </div>
+
+        <div class="board-wrap">
+          <canvas id="xiangqi-board" width="810" height="900" aria-label="中国象棋棋盘"></canvas>
+        </div>
+
+        <div class="player-row">
+          <span class="avatar red">帅</span>
+          <div><strong>红方</strong><small id="red-state">轮到你走</small></div>
+          <span class="turn-badge" id="turn-badge">红方行棋</span>
+        </div>
+
+        <div class="board-actions">
+          <button id="undo">悔棋</button>
+          <button id="flip">翻转</button>
+          <button disabled>提示 · 待接引擎</button>
+          <button disabled>分析 · 待接 Council</button>
+        </div>
+      </section>
+
+      <aside class="side-stack">
+        <section class="panel council-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">COUNCIL</p><h2>象棋理事会</h2></div>
+            <span class="status-dot">基础框架</span>
+          </div>
+          <div class="agent-list">
+            <article><span>攻</span><div><strong>攻杀师</strong><p>计算将军、捉子与强制手段</p></div></article>
+            <article><span>势</span><div><strong>局势师</strong><p>评估子力、空间与阵型</p></div></article>
+            <article><span>稳</span><div><strong>风险官</strong><p>检查漏着、兑子与王区安全</p></div></article>
+          </div>
+          <div class="empty-state">
+            <strong>走子闭环已就绪</strong>
+            <p>下一阶段接入完整棋规、Pikafish 评估和分歧驱动辩论。</p>
+          </div>
+        </section>
+
+        <section class="panel history-panel">
+          <div class="panel-head"><h2>着法记录</h2><button id="clear-history">清空</button></div>
+          <ol id="move-list"><li class="placeholder">尚无着法</li></ol>
+        </section>
+      </aside>
+    </main>
+  </div>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
