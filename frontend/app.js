@@ -5,6 +5,19 @@ const LABELS = {
   r: '車', n: '馬', b: '象', a: '士', k: '將', c: '砲', p: '卒',
 };
 
+function getSessionId() {
+  let sid = sessionStorage.getItem('xq_sid');
+  if (!sid) {
+    sid = (crypto.randomUUID && crypto.randomUUID()) || `xq_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    sessionStorage.setItem('xq_sid', sid);
+  }
+  return sid;
+}
+
+function rememberSession(sid) {
+  if (sid) sessionStorage.setItem('xq_sid', sid);
+}
+
 let canvas, ctx;
 let board = [];
 let turn = 'red';
@@ -19,6 +32,25 @@ let humanColor = 'red';
 let online = { active: false, roomId: null, token: null, color: null, ws: null };
 let lastCouncil = null;
 let verdictUci = null;
+let libraryScript = null;
+let challengeState = { active: false, id: null, level: null, title: '', goal: '', humanColor: 'red' };
+let activePuzzleId = null;
+let cursorSquare = { row: 9, col: 4 };
+const CHALLENGE_STORAGE_KEY = 'xq_challenge_cleared_v1';
+
+function getClearedChallenges() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(CHALLENGE_STORAGE_KEY) || '[]'));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function markChallengeCleared(id) {
+  const set = getClearedChallenges();
+  set.add(id);
+  localStorage.setItem(CHALLENGE_STORAGE_KEY, JSON.stringify([...set]));
+}
 
 function parseBoardFromFen(fen) {
   const rows = (fen || '').split(' ')[0].split('/');
@@ -109,6 +141,16 @@ function drawBoard() {
     ctx.beginPath();
     ctx.arc(padX + p.col * cellX, padY + p.row * cellY, Math.min(cellX, cellY) * 0.43, 0, Math.PI * 2);
     ctx.fill();
+  }
+  if (cursorSquare && document.activeElement === canvas) {
+    const p = screenPoint(cursorSquare.row, cursorSquare.col);
+    ctx.strokeStyle = 'rgba(30, 90, 160, .9)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(padX + p.col * cellX, padY + p.row * cellY, Math.min(cellX, cellY) * 0.46, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   for (const h of highlights) {
     const p = screenPoint(h.row, h.col);
@@ -210,16 +252,58 @@ function applyState(state) {
   highlights = [];
   setStatus(state);
   renderBoard();
+  updateScriptBar(state.library);
+  maybeClearChallenge(state);
   return state;
 }
 
+function updateScriptBar(library) {
+  const bar = document.getElementById('script-bar');
+  const label = document.getElementById('script-label');
+  const btn = document.getElementById('btn-script-step');
+  if (!bar) return;
+  if (library && library.has_script) {
+    libraryScript = library;
+    bar.hidden = false;
+    if (label) {
+      label.textContent = `${library.title || '棋谱'} · ${library.index || 0}/${library.total || 0}`;
+    }
+    if (btn) btn.disabled = !!library.done;
+  } else if (!libraryScript) {
+    bar.hidden = true;
+  }
+}
+
+function maybeClearChallenge(state) {
+  if (!challengeState.active || !state?.is_game_over) return;
+  const result = state.result || '';
+  const human = challengeState.humanColor === 'red' ? '红方' : '黑方';
+  if (result.includes(human) && result.includes('胜')) {
+    markChallengeCleared(challengeState.id);
+    const note = document.getElementById('council-note');
+    if (note) note.textContent = `闯关成功：第 ${challengeState.level} 关「${challengeState.title}」已通关`;
+  }
+}
+
 async function api(path, options = {}) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Session-Id': getSessionId(),
+    ...(options.headers || {}),
+  };
   const res = await fetch(`${API}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options,
+    headers,
   });
+  const sid = res.headers.get('X-Session-Id');
+  if (sid) rememberSession(sid);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.message || '请求失败');
+  if (data.session_id) rememberSession(data.session_id);
+  if (!res.ok) {
+    const detail = data.detail;
+    const msg = typeof detail === 'string' ? detail : (detail?.msg || data.message || `请求失败(${res.status})`);
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -284,11 +368,102 @@ function renderDebate(council) {
 }
 
 function activateTab(name) {
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab').forEach((t) => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle('active', on);
+    t.setAttribute('role', 'tab');
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    t.setAttribute('tabindex', on ? '0' : '-1');
+  });
   document.querySelectorAll('.tab-content').forEach((el) => {
     const on = el.id === `tab-${name}`;
     el.classList.toggle('active', on);
     el.hidden = !on;
+    el.setAttribute('role', 'tabpanel');
+  });
+}
+
+function wireTabKeyboard() {
+  const tabs = [...document.querySelectorAll('.tab[data-tab]')];
+  if (!tabs.length) return;
+  const list = tabs[0].closest('[role="tablist"]') || tabs[0].parentElement;
+  list?.addEventListener('keydown', (ev) => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(ev.key)) return;
+    const i = tabs.findIndex((t) => t.getAttribute('aria-selected') === 'true');
+    let next = i;
+    if (ev.key === 'ArrowRight') next = (i + 1) % tabs.length;
+    if (ev.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+    if (ev.key === 'Home') next = 0;
+    if (ev.key === 'End') next = tabs.length - 1;
+    ev.preventDefault();
+    activateTab(tabs[next].dataset.tab);
+    tabs[next].focus();
+  });
+}
+
+function moveCursor(dRow, dCol) {
+  let row = cursorSquare.row + dRow;
+  let col = cursorSquare.col + dCol;
+  row = Math.max(0, Math.min(9, row));
+  col = Math.max(0, Math.min(8, col));
+  cursorSquare = { row, col };
+  renderBoard();
+}
+
+async function activateCursorSquare() {
+  const stateTurn = turn;
+  const may = online.active ? online.color === stateTurn : (mode === 'human_vs_ai' ? stateTurn === humanColor : true);
+  if (!may || busy) return;
+  const point = { ...cursorSquare };
+  const piece = board[point.row]?.[point.col];
+  if (!selected) {
+    if (piece && colorOf(piece) === stateTurn) {
+      selected = point;
+      rebuildHighlights();
+      renderBoard();
+    }
+    return;
+  }
+  if (piece && colorOf(piece) === stateTurn) {
+    selected = point;
+    rebuildHighlights();
+    renderBoard();
+    return;
+  }
+  const uci = `${squareCode(selected.row, selected.col)}${squareCode(point.row, point.col)}`;
+  selected = null;
+  highlights = [];
+  renderBoard();
+  await playMove(uci);
+}
+
+function wireBoardKeyboard() {
+  if (!canvas) return;
+  canvas.setAttribute('tabindex', '0');
+  canvas.setAttribute('role', 'application');
+  canvas.setAttribute('aria-label', '中国象棋棋盘，方向键移动光标，回车选择或走子');
+  canvas.addEventListener('keydown', async (ev) => {
+    const map = {
+      ArrowUp: flipped ? [1, 0] : [-1, 0],
+      ArrowDown: flipped ? [-1, 0] : [1, 0],
+      ArrowLeft: flipped ? [0, 1] : [0, -1],
+      ArrowRight: flipped ? [0, -1] : [0, 1],
+    };
+    if (map[ev.key]) {
+      ev.preventDefault();
+      moveCursor(...map[ev.key]);
+      return;
+    }
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      await activateCursorSquare();
+    }
+    if (ev.key === 'Escape') {
+      selected = null;
+      highlights = [];
+      renderBoard();
+    }
   });
 }
 
@@ -420,6 +595,9 @@ function wireCouncilUi() {
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.addEventListener('click', () => activateTab(tab.dataset.tab));
   });
+  wireTabKeyboard();
+  const active = document.querySelector('.tab.active')?.dataset?.tab || 'summary';
+  activateTab(active);
   document.querySelectorAll('.dg-card').forEach((card) => {
     card.addEventListener('click', () => {
       const role = card.dataset.role;
@@ -499,6 +677,34 @@ async function playMove(uci) {
       }
       return;
     }
+    if (activePuzzleId) {
+      const data = await api(`/puzzles/${activePuzzleId}/check`, {
+        method: 'POST',
+        body: JSON.stringify({ uci }),
+      });
+      applyState(data.state || data);
+      const note = document.getElementById('council-note');
+      if (data.correct) {
+        if (data.solved) {
+          if (challengeState.active) {
+            markChallengeCleared(challengeState.id);
+            if (note) {
+              note.textContent = `闯关成功：第 ${challengeState.level} 关「${challengeState.title}」已通关`;
+            }
+            challengeState.active = false;
+          } else if (note) {
+            note.textContent = `残局通关！${data.goal || ''}`;
+          }
+          activePuzzleId = null;
+        } else if (note) {
+          note.textContent = `正确（${data.progress || ''}）。继续解题。`;
+        }
+      } else {
+        if (note) note.textContent = data.hint || '着法不正确，请重试';
+        alert(data.hint || '着法不正确');
+      }
+      return;
+    }
     const state = await api('/game/move', { method: 'POST', body: JSON.stringify({ uci }) });
     applyState(state);
     await maybeAnalyzeAfterMove();
@@ -570,6 +776,7 @@ async function bootPlay() {
   ctx = canvas.getContext('2d');
   wireCouncilUi();
   canvas.addEventListener('click', onBoardClick);
+  wireBoardKeyboard();
   document.getElementById('new-game')?.addEventListener('click', () => newGame().catch(e => alert(e.message)));
   document.getElementById('flip')?.addEventListener('click', () => {
     flipped = !flipped;
@@ -603,6 +810,15 @@ async function bootPlay() {
       alert(err.message);
     }
   });
+  document.getElementById('btn-script-step')?.addEventListener('click', async () => {
+    try {
+      const state = await api('/library/step', { method: 'POST' });
+      applyState(state);
+      await maybeAnalyzeAfterMove();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
   document.getElementById('game-mode')?.addEventListener('change', () => {
     mode = document.getElementById('game-mode').value;
   });
@@ -610,13 +826,44 @@ async function bootPlay() {
     humanColor = document.getElementById('human-color').value;
   });
   const params = new URLSearchParams(location.search);
-  if (params.get('puzzle') || params.get('continue') === '1') {
+  if (params.get('challenge') === '1') {
+    try {
+      const raw = sessionStorage.getItem('xq_challenge_state_v1');
+      if (raw) challengeState = { ...challengeState, ...JSON.parse(raw), active: true };
+      sessionStorage.removeItem('xq_challenge_state_v1');
+    } catch (_) {}
+    if (challengeState.humanColor) {
+      humanColor = challengeState.humanColor;
+      flipped = humanColor === 'black';
+      const sel = document.getElementById('human-color');
+      if (sel) sel.value = humanColor;
+    }
+  }
+  if (params.get('puzzle') || params.get('continue') === '1' || params.get('library') === '1' || params.get('challenge') === '1') {
     applyState(await api('/game/state'));
+    const note = document.getElementById('council-note');
     if (params.get('puzzle')) {
-      const note = document.getElementById('council-note');
-      if (note) note.textContent = '残局已加载：可点「分析局面」或直接走子。';
+      activePuzzleId = params.get('puzzle');
+      if (note) note.textContent = '残局已加载：走出正确着法即可通关；错误着法不会落子。';
+    } else if (params.get('challenge') === '1') {
+      // 闯关与谜题共用答案校验接口，禁止乱走通关
+      activePuzzleId = challengeState.id || null;
+      if (note) {
+        note.textContent = `闯关第 ${challengeState.level} 关 · ${challengeState.title} · 目标：${challengeState.goal}（须走出正解）`;
+      }
+    } else if (params.get('library') === '1' && note) {
+      note.textContent = '名局已加载：点「下一步」跟谱，或自行走子。';
+      // 拉取 library 进度：通过再 load 太重，用 script bar 在首次 step 前显示
+      const bar = document.getElementById('script-bar');
+      if (bar) {
+        bar.hidden = false;
+        const label = document.getElementById('script-label');
+        if (label) label.textContent = '名局跟谱 · 点下一步';
+        libraryScript = { has_script: true, index: 0, total: '?', title: '名局' };
+      }
     }
   } else {
+    activePuzzleId = null;
     await newGame();
   }
   // 开局自动给一版局面阅读
@@ -624,24 +871,126 @@ async function bootPlay() {
 }
 
 async function bootLearn() {
-  const box = document.getElementById('puzzle-list');
-  if (!box) return;
-  const data = await api('/puzzles');
-  box.innerHTML = (data.items || []).map((p) => `
-    <article class="panel feature-card">
-      <h2>${p.title}</h2>
-      <p>${p.goal}</p>
-      <p class="muted">难度 ${'★'.repeat(p.difficulty)}${'☆'.repeat(3 - p.difficulty)} · ${p.side === 'red' ? '红先' : '黑先'}</p>
-      <button class="accent" data-id="${p.id}" type="button">开始</button>
-    </article>
-  `).join('');
-  box.querySelectorAll('button[data-id]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      await api(`/puzzles/${id}/load`, { method: 'POST' });
-      location.href = 'index.html?puzzle=' + encodeURIComponent(id) + '&continue=1';
+  const libBox = document.getElementById('library-list');
+  const challengeBox = document.getElementById('challenge-list');
+  if (!libBox && !challengeBox) return;
+
+  let libraryCache = [];
+  let challengeCache = [];
+  let currentCat = '';
+
+  async function loadLibrary(cat = '') {
+    currentCat = cat;
+    const q = cat ? `?category=${encodeURIComponent(cat)}` : '';
+    const data = await api(`/library${q}`);
+    libraryCache = data.items || [];
+    const status = document.getElementById('lib-status');
+    if (status) status.textContent = `共 ${libraryCache.length} 条`;
+    renderLibrary();
+  }
+
+  function renderLibrary() {
+    if (!libBox) return;
+    libBox.innerHTML = libraryCache.map((item) => {
+      const catLabel = item.category === 'game' ? '名局' : (item.category === 'endgame' ? '残局' : '战术');
+      const stars = item.difficulty ? `${'★'.repeat(item.difficulty)}${'☆'.repeat(3 - item.difficulty)}` : '';
+      const actions = item.category === 'game'
+        ? `<button class="accent" data-act="demo" data-id="${item.id}" type="button">跟谱演示</button>
+           <button data-act="free" data-id="${item.id}" type="button">自由推演</button>`
+        : `<button class="accent" data-act="puzzle" data-id="${item.id}" type="button">开始</button>`;
+      return `
+        <article class="panel feature-card">
+          <p class="eyebrow">${escapeHtml(catLabel)}${stars ? ' · ' + stars : ''}</p>
+          <h2>${escapeHtml(item.title)}</h2>
+          <p>${escapeHtml(item.blurb || '')}</p>
+          <p class="muted">${item.has_script ? `${item.move_count} 着可演示` : (item.side === 'black' ? '黑先' : '红先')}</p>
+          <div class="card-actions">${actions}</div>
+        </article>`;
+    }).join('') || '<p class="muted">暂无条目</p>';
+
+    libBox.querySelectorAll('button[data-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        const act = btn.getAttribute('data-act');
+        if (act === 'demo') {
+          await api(`/library/${id}/load`, { method: 'POST', body: JSON.stringify({ free_play: false }) });
+          location.href = 'index.html?library=1&continue=1';
+        } else if (act === 'free') {
+          await api(`/library/${id}/load`, { method: 'POST', body: JSON.stringify({ free_play: true }) });
+          location.href = 'index.html?continue=1';
+        } else {
+          await api(`/puzzles/${id}/load`, { method: 'POST' });
+          location.href = 'index.html?puzzle=' + encodeURIComponent(id) + '&continue=1';
+        }
+      });
+    });
+  }
+
+  async function loadChallenges() {
+    if (!challengeBox) return;
+    const data = await api('/challenges');
+    challengeCache = data.levels || [];
+    const cleared = getClearedChallenges();
+    challengeBox.innerHTML = challengeCache.map((lv, idx) => {
+      const prevId = idx > 0 ? challengeCache[idx - 1].id : null;
+      const unlocked = idx === 0 || cleared.has(lv.id) || (prevId && cleared.has(prevId));
+      const done = cleared.has(lv.id);
+      const stars = '★'.repeat(lv.difficulty) + '☆'.repeat(3 - lv.difficulty);
+      return `
+        <article class="panel feature-card ${unlocked ? '' : 'is-locked'}">
+          <div class="challenge-top"><span>第 ${lv.level} 关</span><span>${stars}</span></div>
+          <h2>${escapeHtml(lv.title)}</h2>
+          <p>${escapeHtml(lv.goal || '')}</p>
+          <p class="muted">${escapeHtml(lv.blurb || '')}</p>
+          <div class="card-actions">
+            ${unlocked
+              ? `<button class="accent" data-level="${lv.level}" data-id="${lv.id}" type="button">开始</button>
+                 ${done ? '<span class="challenge-done">已通关</span>' : ''}`
+              : '<span class="challenge-lock">先通上一关</span>'}
+          </div>
+        </article>`;
+    }).join('');
+
+    challengeBox.querySelectorAll('button[data-id]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        const level = Number(btn.getAttribute('data-level'));
+        const lv = challengeCache.find((x) => x.id === id);
+        await api(`/challenges/${id}/load`, { method: 'POST' });
+        const payload = {
+          active: true,
+          id,
+          level,
+          title: lv?.title || id,
+          goal: lv?.goal || '',
+          humanColor: lv?.human_color || 'red',
+        };
+        sessionStorage.setItem('xq_challenge_state_v1', JSON.stringify(payload));
+        location.href = 'index.html?challenge=1&continue=1';
+      });
+    });
+  }
+
+  document.querySelectorAll('.learn-mode-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.learn-mode-tab').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      const mode = tab.dataset.learn;
+      document.getElementById('learn-library').hidden = mode !== 'library';
+      document.getElementById('learn-challenge').hidden = mode !== 'challenge';
+      if (mode === 'challenge') loadChallenges().catch((e) => alert(e.message));
     });
   });
+
+  document.querySelectorAll('.lib-filter').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.lib-filter').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadLibrary(btn.dataset.cat || '').catch((e) => alert(e.message));
+    });
+  });
+
+  await loadLibrary('');
 }
 
 async function bootOnline() {
@@ -691,20 +1040,56 @@ function connectWs() {
 
 async function resumeOnlineIfNeeded() {
   const params = new URLSearchParams(location.search);
-  if (params.get('online') === '1' || params.get('room')) {
-    try {
-      const saved = JSON.parse(localStorage.getItem('xq_online') || 'null');
-      if (saved?.roomId && saved?.token) {
-        online = { ...saved, ws: null, active: true };
-        const state = await api(`/rooms/${online.roomId}`);
-        mode = 'human_vs_human';
-        flipped = online.color === 'black';
-        applyState(state);
-        connectWs();
-        document.getElementById('council-note').innerHTML = `<strong>联机房间 ${online.roomId}</strong><p>你执${online.color === 'red' ? '红' : '黑'}方。对手走子会实时同步。</p>`;
-        return true;
+  const roomParam = (params.get('room') || '').trim().toUpperCase();
+  if (params.get('online') !== '1' && !roomParam) return false;
+  try {
+    const saved = JSON.parse(localStorage.getItem('xq_online') || 'null');
+    const sameRoom = saved?.roomId && (!roomParam || String(saved.roomId).toUpperCase() === roomParam);
+    if (saved?.token && sameRoom) {
+      online = { ...saved, ws: null, active: true };
+      const state = await api(`/rooms/${online.roomId}`);
+      mode = 'human_vs_human';
+      flipped = online.color === 'black';
+      applyState(state);
+      connectWs();
+      const note = document.getElementById('council-note');
+      if (note) {
+        note.innerHTML = '';
+        const strong = document.createElement('strong');
+        strong.textContent = `联机房间 ${online.roomId}`;
+        const p = document.createElement('p');
+        p.textContent = `你执${online.color === 'red' ? '红' : '黑'}方。对手走子会实时同步。`;
+        note.append(strong, p);
       }
-    } catch (_) {}
+      return true;
+    }
+    if (roomParam) {
+      const name = document.getElementById('player-name')?.value || '访客';
+      const data = await api(`/rooms/${roomParam}/join`, {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+      online = {
+        active: true,
+        roomId: data.room_id,
+        token: data.token,
+        color: data.color,
+        ws: null,
+      };
+      localStorage.setItem('xq_online', JSON.stringify({ ...online, ws: undefined }));
+      mode = 'human_vs_human';
+      flipped = online.color === 'black';
+      applyState(data.state || (await api(`/rooms/${online.roomId}`)));
+      connectWs();
+      const note = document.getElementById('council-note');
+      if (note) {
+        note.textContent = `已通过邀请加入 ${online.roomId}，你执${online.color === 'red' ? '红' : '黑'}方`;
+      }
+      return true;
+    }
+  } catch (err) {
+    console.error(err);
+    alert(err.message || '加入联机房间失败');
   }
   return false;
 }

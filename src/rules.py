@@ -12,6 +12,9 @@ PIECE_NAMES = {
 }
 
 
+VALID_PIECES = set("RNBAKCPrnbakcp")
+
+
 @dataclass(frozen=True)
 class Move:
     fr: int
@@ -25,10 +28,17 @@ class Move:
 
     @classmethod
     def from_uci(cls, uci: str) -> "Move":
-        uci = uci.strip().lower()
+        uci = (uci or "").strip().lower()
         if len(uci) != 4:
             raise ValueError("非法着法编码")
-        fc, fr, tc, tr = ord(uci[0]) - 97, 9 - int(uci[1]), ord(uci[2]) - 97, 9 - int(uci[3])
+        if uci[0] not in "abcdefghi" or uci[2] not in "abcdefghi":
+            raise ValueError("非法着法编码")
+        if not (uci[1].isdigit() and uci[3].isdigit()):
+            raise ValueError("非法着法编码")
+        fc, tc = ord(uci[0]) - 97, ord(uci[2]) - 97
+        fr, tr = 9 - int(uci[1]), 9 - int(uci[3])
+        if not (0 <= fr < 10 and 0 <= tr < 10 and 0 <= fc < 9 and 0 <= tc < 9):
+            raise ValueError("格子越界")
         return cls(fr, fc, tr, tc)
 
 
@@ -40,6 +50,9 @@ def parse_fen(fen: str) -> tuple[list[list[str | None]], str, int, int]:
     parts = fen.strip().split()
     if len(parts) < 2:
         raise ValueError("FEN 不完整")
+    side_token = parts[1].lower()
+    if side_token not in {"w", "b", "r", "red", "black"}:
+        raise ValueError("行棋方非法")
     rows = parts[0].split("/")
     if len(rows) != 10:
         raise ValueError("FEN 行数错误")
@@ -49,16 +62,33 @@ def parse_fen(fen: str) -> tuple[list[list[str | None]], str, int, int]:
         for ch in row:
             if ch.isdigit():
                 c += int(ch)
+                if c > 9:
+                    raise ValueError("FEN 列数错误")
             else:
+                if ch not in VALID_PIECES:
+                    raise ValueError(f"非法棋子字符: {ch}")
                 if c >= 9:
                     raise ValueError("FEN 列数错误")
                 board[r][c] = ch
                 c += 1
         if c != 9:
             raise ValueError("FEN 列数错误")
-    turn = "red" if parts[1].lower().startswith("w") or parts[1] in {"r", "R"} else "black"
+    red_k = sum(1 for r in range(10) for c in range(9) if board[r][c] == "K")
+    black_k = sum(1 for r in range(10) for c in range(9) if board[r][c] == "k")
+    if red_k != 1 or black_k != 1:
+        raise ValueError("局面必须恰好各有一枚帅/将")
+    turn = "red" if side_token.startswith("w") or side_token in {"r", "red"} else "black"
     half = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
     full = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 1
+    if half < 0 or full < 1:
+        raise ValueError("半回合/回合计数非法")
+    # 将帅须在九宫
+    rk = find_king(board, "red")
+    bk = find_king(board, "black")
+    if not rk or not palace_ok("red", rk[0], rk[1]):
+        raise ValueError("红帅不在九宫")
+    if not bk or not palace_ok("black", bk[0], bk[1]):
+        raise ValueError("黑将不在九宫")
     return board, turn, half, full
 
 
@@ -271,7 +301,9 @@ def evaluate_material(board) -> int:
             p = board[r][c]
             if not p:
                 continue
-            v = values[p.lower()]
+            v = values.get(p.lower())
+            if v is None:
+                continue
             score += v if p.isupper() else -v
     return score
 
@@ -309,6 +341,8 @@ class XiangqiGame:
         if not is_legal(self.board, move, self.turn):
             raise ValueError("非法着法")
         san = move_san(self.board, move)
+        half_before = self.halfmove
+        full_before = self.fullmove
         piece, captured = apply_raw(self.board, move)
         entry = {
             "uci": move.uci,
@@ -332,6 +366,8 @@ class XiangqiGame:
             self.halfmove += 1
         if self.turn == "black":
             self.fullmove += 1
+        entry["halfmove_before"] = half_before
+        entry["fullmove_before"] = full_before
         self.turn = "black" if self.turn == "red" else "red"
         entry["fen"] = self.fen()
         self.history.append(entry)
@@ -347,7 +383,11 @@ class XiangqiGame:
         self.board[fr][fc] = last["piece"]
         self.board[tr][tc] = last["captured"]
         self.turn = last["color"]
-        if self.turn == "black" and self.fullmove > 1:
+        if "halfmove_before" in last:
+            self.halfmove = last["halfmove_before"]
+        if "fullmove_before" in last:
+            self.fullmove = last["fullmove_before"]
+        elif self.turn == "black" and self.fullmove > 1:
             self.fullmove -= 1
         self.result = None
         self._refresh_result()
@@ -358,11 +398,12 @@ class XiangqiGame:
         if moves:
             self.result = None
             return
+        # 中国象棋：无子可动方判负（困毙），并非国际象棋式逼和
+        winner = "黑方" if self.turn == "red" else "红方"
         if in_check(self.board, self.turn):
-            winner = "黑方" if self.turn == "red" else "红方"
             self.result = f"{winner}胜 · 绝杀"
         else:
-            self.result = "和棋 · 困毙"
+            self.result = f"{winner}胜 · 困毙"
 
     def targets_for(self, fr: int, fc: int) -> list[str]:
         return [Move(fr, fc, tr, tc).uci[2:] for tr, tc in legal_targets(self.board, self.turn, fr, fc)]

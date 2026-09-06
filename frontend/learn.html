@@ -1,8 +1,10 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>学习 · Xiangqi Council</title><link rel="stylesheet" href="style.css?v=3">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>学习 · Xiangqi Council</title>
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body data-page="learn">
 <div class="app-shell">
@@ -14,12 +16,32 @@
   <main class="page-main">
     <section class="panel hero">
       <p class="eyebrow">LEARN</p>
-      <h1>残局与战术</h1>
-      <p>先从可玩的杀法题开始；后续补齐棋谱库与 Council 讲解。</p>
+      <h1>名局 · 残局 · 闯关</h1>
+      <p>名局跟谱、战术题库与残局闯关；加载后进入对弈页推演。</p>
     </section>
-    <div id="puzzle-list" class="feature-grid"></div>
+
+    <div class="learn-mode-tabs" role="tablist">
+      <button type="button" class="learn-mode-tab active" data-learn="library">名局图库</button>
+      <button type="button" class="learn-mode-tab" data-learn="challenge">残局闯关</button>
+    </div>
+
+    <div id="learn-library">
+      <div class="lib-filters">
+        <button type="button" class="lib-filter active" data-cat="">全部</button>
+        <button type="button" class="lib-filter" data-cat="game">名局</button>
+        <button type="button" class="lib-filter" data-cat="endgame">残局</button>
+        <button type="button" class="lib-filter" data-cat="puzzle">战术</button>
+      </div>
+      <p id="lib-status" class="muted" style="margin:8px 0 12px"></p>
+      <div id="library-list" class="feature-grid"></div>
+    </div>
+
+    <div id="learn-challenge" hidden>
+      <p class="muted">由易到难通关解锁；点开始后进入对弈页。</p>
+      <div id="challenge-list" class="feature-grid" style="margin-top:12px"></div>
+    </div>
   </main>
 </div>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

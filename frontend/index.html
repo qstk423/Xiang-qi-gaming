@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#163227">
   <title>对弈 · Xiangqi Council</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body data-page="play">
   <div class="app-shell">
@@ -68,6 +68,10 @@
           <button id="flip" type="button">翻转</button>
           <button id="ai-step" type="button">AI 一步</button>
           <button id="hint" type="button">提示</button>
+        </div>
+        <div class="script-bar" id="script-bar" hidden>
+          <span id="script-label">棋谱演示</span>
+          <button class="accent" id="btn-script-step" type="button">下一步</button>
         </div>
         <p class="result-banner" id="result-banner" hidden></p>
       </section>
@@ -149,6 +153,6 @@
       </aside>
     </main>
   </div>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>

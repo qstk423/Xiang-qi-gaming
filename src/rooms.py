@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import secrets
 import string
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket
 
 from src.rules import XiangqiGame
+
+_MAX_ROOMS = 200
+_ROOM_TTL_SEC = 6 * 3600
 
 
 def _room_id() -> str:
@@ -30,6 +34,10 @@ class Room:
     room_id: str
     game: XiangqiGame = field(default_factory=XiangqiGame)
     seats: dict[str, Seat | None] = field(default_factory=lambda: {"red": None, "black": None})
+    touched_at: float = field(default_factory=time.time)
+
+    def touch(self) -> None:
+        self.touched_at = time.time()
 
     def public_state(self) -> dict[str, Any]:
         snap = self.game.snapshot()
@@ -77,7 +85,19 @@ class RoomManager:
     def __init__(self):
         self.rooms: dict[str, Room] = {}
 
+    def _purge(self) -> None:
+        now = time.time()
+        dead = [rid for rid, room in self.rooms.items() if now - room.touched_at > _ROOM_TTL_SEC]
+        for rid in dead:
+            self.rooms.pop(rid, None)
+        while len(self.rooms) > _MAX_ROOMS:
+            oldest = min(self.rooms.values(), key=lambda r: r.touched_at)
+            self.rooms.pop(oldest.room_id, None)
+
     def create(self, name: str = "玩家", color: str = "red") -> dict:
+        self._purge()
+        if len(self.rooms) >= _MAX_ROOMS:
+            raise RuntimeError("房间过多，请稍后再试")
         color = "red" if color not in {"red", "black"} else color
         room_id = _room_id()
         while room_id in self.rooms:
@@ -85,6 +105,7 @@ class RoomManager:
         room = Room(room_id=room_id)
         token = secrets.token_urlsafe(12)
         room.seats[color] = Seat(token=token, color=color, name=name or "玩家")
+        room.touch()
         self.rooms[room_id] = room
         return {
             "room_id": room_id,
@@ -95,6 +116,7 @@ class RoomManager:
         }
 
     def join(self, room_id: str, name: str = "玩家") -> dict:
+        self._purge()
         room = self.rooms.get(room_id.upper())
         if not room:
             raise KeyError("房间不存在")
@@ -103,6 +125,7 @@ class RoomManager:
             raise RuntimeError("房间已满")
         token = secrets.token_urlsafe(12)
         room.seats[open_color] = Seat(token=token, color=open_color, name=name or "玩家")
+        room.touch()
         return {
             "room_id": room.room_id,
             "token": token,
@@ -112,7 +135,11 @@ class RoomManager:
         }
 
     def get(self, room_id: str) -> Room | None:
-        return self.rooms.get(room_id.upper())
+        self._purge()
+        room = self.rooms.get(room_id.upper())
+        if room:
+            room.touch()
+        return room
 
     def play_move(self, room: Room, token: str, uci: str) -> dict:
         seat = room.seat_by_token(token)
@@ -126,6 +153,7 @@ class RoomManager:
             entry = room.game.play_uci(uci)
         except ValueError as exc:
             return {"error": str(exc)}
+        room.touch()
         return {"ok": True, "move": entry, "state": room.public_state()}
 
     def reset(self, room: Room, token: str) -> dict:
@@ -133,6 +161,7 @@ class RoomManager:
         if not seat:
             return {"error": "无效身份"}
         room.game.reset()
+        room.touch()
         return {"ok": True, "state": room.public_state()}
 
 
